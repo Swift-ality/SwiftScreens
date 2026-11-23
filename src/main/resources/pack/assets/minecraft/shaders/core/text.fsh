@@ -73,7 +73,7 @@ vec4 so_screen_color() {
     vec2 local = clamp(clamp(picPx, vec2(0.0), size - 0.001) - vec2(soTile) * 128.0, 0.0, 127.999);
     ivec2 tex = ivec2(local);
     // the signature row is data, not picture: show the row under it instead
-    if (tex.y == 0 && tex.x < 32) tex.y = 1;
+    if (tex.y == 0 && tex.x < 64) tex.y = 1;
     vec4 c = texelFetch(Sampler0, soBase + tex, 0);
     int h = so_hand(picPx);
     if (h == 1) c = vec4(0.0, 0.0, 0.0, 1.0);

@@ -105,7 +105,6 @@ void main() {
     // SO_FRACTION into the block along x: the quad's east edge (the picture's left) is the side past the middle.
     float cx = Position.x > 0.5 - SO_FRACTION ? 0.0 : 1.0;
     vec2 corner = vec2(cx, 0.0);
-    ivec2 base = ivec2(0);
     // Top or bottom: the eye's height in the block is in the signature (pixels 24-31). Try both rows; the right
     // one is signed and puts this vertex on the side of the middle it really is on.
     for (int row = 0; row < 2; row++) {
@@ -145,7 +144,19 @@ void main() {
         // plane, through the game's own projection.
         vec4 near = ProjMat * vec4(0.0, 0.0, -0.06, 1.0);
         gl_Position = vec4(ndc.x * near.w, ndc.y * near.w, near.z, near.w);
-        soPointer = so_pointer(so_width_degrees(so_byte(base, 16)));
+        if (so_bit(soBase, 32) == 1) {
+            // the view is locked: the server moves the pointer and writes it into the maps it is over
+            if (so_bit(soBase, 33) == 1) {
+                int px = 0, py = 0;
+                for (int i = 0; i < 11; i++) px = px * 2 + so_bit(soBase, 34 + i);
+                for (int i = 0; i < 10; i++) py = py * 2 + so_bit(soBase, 45 + i);
+                soPointer = vec2(float(px), float(py)) / vec2(SO_COLS * 128.0, SO_ROWS * 128.0);
+            } else {
+                soPointer = vec2(-10.0);
+            }
+        } else {
+            soPointer = so_pointer(so_width_degrees(so_byte(soBase, 16)));
+        }
     }
     sphericalVertexDistance = fog_spherical_distance(Position);
     cylindricalVertexDistance = fog_cylindrical_distance(Position);

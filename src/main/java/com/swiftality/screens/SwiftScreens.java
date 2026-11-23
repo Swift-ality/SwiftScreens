@@ -62,5 +62,6 @@ public final class SwiftScreens extends JavaPlugin {
         m.desktopWidth(getConfig().getDouble("screen.desktop-width", 2400.0));
         m.pointerSpeed(getConfig().getDouble("screen.pointer-speed", 22.0));
         Gfx.solidBackground = getConfig().getBoolean("screen.background", false);
+        m.lockView(getConfig().getBoolean("screen.lock-view", true));
     }
 }

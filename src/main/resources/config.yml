@@ -4,6 +4,10 @@ screen:
   # Draw the dark page behind every menu. false: the menu's panels float over the world (only where a screen
   # uses Gfx.background; /screens reload applies it to the next redraw).
   background: false
+  # Keep the view still while a menu is open: the mouse moves only the pointer, and other players never see the
+  # head turn. The pointer then moves at the server's tick rate (20 a second). false: the pointer follows the mouse
+  # every frame, but the view turns with it (behind a see-through menu, the world swings round).
+  lock-view: true
   # With the resource pack the pointer moves like a desktop pointer: it crosses the screen in this many mouse
   # steps, whatever the player's Minecraft sensitivity (the server learns it from how they turn). 1920 is a desktop
   # pointer at Windows' default speed on a 1080p screen; 2400 is 20% slower. Players scale their own with

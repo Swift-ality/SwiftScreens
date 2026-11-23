@@ -85,6 +85,13 @@ public final class ScreenView implements ScreenHost {
 
     /** Shader mode: the player has the screens pack, so their own client draws the picture and pointer. */
     final boolean shader;
+    /**
+     * Shader mode with the view locked: the camera is a still packet entity, so turning the mouse moves only the
+     * pointer, never the view. The server moves the pointer and tells the shader through the map signatures.
+     */
+    final boolean locked;
+    /** A pointer-only update (signatures, no redraw) is queued on the render thread. */
+    private final java.util.concurrent.atomic.AtomicBoolean pointerQueued = new java.util.concurrent.atomic.AtomicBoolean();
     /** The server is turning or moving the player itself (not a teleport that should close the screen). */
     volatile boolean selfMove;
     /** Shader mode: the player looked past the picture's edge; turn them back on the next tick. */
@@ -98,6 +105,7 @@ public final class ScreenView implements ScreenHost {
 
     ScreenView(ScreenManager manager, Player player, Screen screen, boolean shader) {
         this.shader = shader;
+        this.locked = shader && manager.lockView();
         this.speedIndex = manager.speedIndex(player);
         this.pixelsPerDegree = manager.pixelsPerDegree(player);
         this.manager = manager;
@@ -230,7 +238,32 @@ public final class ScreenView implements ScreenHost {
         for (int slot = 36; slot <= 45; slot++) {
             packets.add(new ClientboundContainerSetSlotPacket(0, sp.inventoryMenu.getStateId(), slot, ItemStack.EMPTY));
         }
+        ArmorStand cam = null;
+        if (locked) {
+            // the camera: a still marker whose eye is exactly where the player's eye is (the spot the shaders know)
+            cam = new ArmorStand(level, spot.getX(), 0, spot.getZ());
+            cam.setMarker(true);
+            cam.setInvisible(true);
+            cam.setNoGravity(true);
+            double camY = eyeY - cam.getEyeHeight();
+            cam.setPos(spot.getX(), camY, spot.getZ());
+            entityIds.add(cam.getId());
+            packets.add(new ClientboundAddEntityPacket(cam.getId(), UUID.randomUUID(), spot.getX(), camY, spot.getZ(),
+                    0f, 0f, EntityTypes.ARMOR_STAND, 0, Vec3.ZERO, 0.0));
+            packets.add(new ClientboundSetEntityDataPacket(cam.getId(), cam.getEntityData().getNonDefaultValues()));
+            // a client-only seat: a rider's client keeps sending its turns while the camera is another entity
+            ArmorStand seat = new ArmorStand(level, spot.getX(), spot.getY(), spot.getZ());
+            seat.setMarker(true);
+            seat.setInvisible(true);
+            seatId = seat.getId();
+            entityIds.add(seatId);
+            packets.add(new ClientboundAddEntityPacket(seatId, UUID.randomUUID(), spot.getX(), spot.getY(), spot.getZ(),
+                    0f, 0f, EntityTypes.ARMOR_STAND, 0, Vec3.ZERO, 0.0));
+            packets.add(new ClientboundSetEntityDataPacket(seatId, seat.getEntityData().getNonDefaultValues()));
+            packets.add(passengers(seatId, sp.getId()));
+        }
         for (Packet<?> p : packets) sp.connection.send(p);
+        if (cam != null) sp.connection.send(new ClientboundSetCameraPacket(cam));
         lastYaw = 0f;
         lastPitch = 0f;
         requestRender(true);
@@ -310,6 +343,10 @@ public final class ScreenView implements ScreenHost {
         }
         if (!player.isOnline()) return;
         if (shader) {
+            if (locked) {
+                sp.connection.send(passengers(seatId));
+                sp.connection.send(new ClientboundSetCameraPacket(sp));
+            }
             sp.connection.send(new ClientboundRemoveEntitiesPacket(entityIds.stream().mapToInt(Integer::intValue).toArray()));
             sp.connection.send(new ClientboundSetEntityDataPacket(sp.getId(), List.of(flags(false))));
             player.updateInventory();
@@ -354,6 +391,10 @@ public final class ScreenView implements ScreenHost {
     /** A head turn, straight off the network (network thread): move the pointer now. */
     void look(float yaw, float pitch) {
         if (closed) return;
+        if (locked) {
+            lookLocked(yaw, pitch);
+            return;
+        }
         if (shader) {
             if (!selfMove && !turnBack) manager.mouse().sample(player.getUniqueId(), yaw - lastYaw, pitch - lastPitch, this);
             lastYaw = yaw;
@@ -385,6 +426,49 @@ public final class ScreenView implements ScreenHost {
         moved = true;
     }
 
+    /**
+     * Locked view (network thread): the pointer moves by how far the head turned, at the shader mode's speed; near
+     * the pitch stop the head is turned level again, on the player's client only.
+     */
+    private void lookLocked(float yaw, float pitch) {
+        if (recentring) {
+            if (Math.abs(pitch) > 10f) return;
+            recentring = false;
+            lastYaw = yaw;
+            lastPitch = pitch;
+            return;
+        }
+        float dy = wrap(yaw - lastYaw), dp = pitch - lastPitch;
+        if (dy != 0f || dp != 0f) manager.mouse().sample(player.getUniqueId(), dy, dp, this);
+        lastYaw = yaw;
+        lastPitch = pitch;
+        if (Math.abs(pitch) > 60f) {
+            recentring = true;
+            sp.connection.send(new net.minecraft.network.protocol.game.ClientboundPlayerRotationPacket(0f, true, 0f, false));
+        }
+        if (dy == 0f && dp == 0f) return;
+        double w = widthDegrees(), h = Math.min(w * Screen.ROWS / Screen.COLS, 170.0);
+        px = clamp(px + dy * (Screen.W - 1) / w, 0, Screen.W - 1);
+        py = clamp(py + dp * (Screen.H - 1) / h, 0, Screen.H - 1);
+        moved = true;
+        requestPointer();
+    }
+
+    /** Locked view: sends the pointer's new place in the signatures of the maps it is over (render thread). */
+    private void requestPointer() {
+        if (closed || !pointerQueued.compareAndSet(false, true)) return;
+        manager.render(() -> {
+            pointerQueued.set(false);
+            if (closed || !everSent) return;
+            try {
+                sign();
+                send(false);
+            } catch (Throwable t) {
+                manager.plugin().getLogger().warning("Moving the pointer for " + player.getName() + " failed: " + t);
+            }
+        });
+    }
+
     /** Every tick (server thread): hover, the pitch stop, the server's copy of the pointer, and redraws. */
     void tick() {
         if (closed) return;
@@ -410,7 +494,8 @@ public final class ScreenView implements ScreenHost {
         float pitch = lastPitch;
         if (!recentring && Math.abs(pitch) > 60f) {
             recentring = true;
-            player.setRotation(lastYaw, 0f);
+            // on the player's client only: nobody else sees the head move
+            sp.connection.send(new net.minecraft.network.protocol.game.ClientboundPlayerRotationPacket(0f, true, 0f, false));
         }
         if (moved) {
             moved = false;
@@ -492,6 +577,7 @@ public final class ScreenView implements ScreenHost {
      * for the shaders (e: the eye's height within its block, in 256ths).
      */
     private void sign() {
+        int x = (int) px, y = (int) py;
         for (int r = 0; r < Screen.ROWS; r++) {
             for (int c = 0; c < Screen.COLS; c++) {
                 int base = (r * 128) * Screen.W + c * 128;
@@ -502,6 +588,13 @@ public final class ScreenView implements ScreenHost {
                 }
                 for (int i = 0; i < 8; i++) frame[base + 16 + i] = ((speedIndex >> (7 - i)) & 1) == 1 ? SIGN_ON : SIGN_OFF;
                 for (int i = 0; i < 8; i++) frame[base + 24 + i] = ((eyeFraction >> (7 - i)) & 1) == 1 ? SIGN_ON : SIGN_OFF;
+                // 32: the server moves the pointer; 33: it is over this map; 34-44 its x, 45-54 its y (picture px)
+                boolean here = locked && x >= c * 128 - 18 && x <= c * 128 + 137 && y >= r * 128 - 29 && y <= r * 128 + 128;
+                frame[base + 32] = locked ? SIGN_ON : SIGN_OFF;
+                frame[base + 33] = here ? SIGN_ON : SIGN_OFF;
+                for (int i = 0; i < 11; i++) frame[base + 34 + i] = here && ((x >> (10 - i)) & 1) == 1 ? SIGN_ON : SIGN_OFF;
+                for (int i = 0; i < 10; i++) frame[base + 45 + i] = here && ((y >> (9 - i)) & 1) == 1 ? SIGN_ON : SIGN_OFF;
+                for (int i = 55; i < 64; i++) frame[base + i] = SIGN_OFF;
             }
         }
     }

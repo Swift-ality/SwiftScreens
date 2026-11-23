@@ -86,6 +86,16 @@ public final class ScreenManager implements Listener {
 
     private ScreenPack pack;
     private double desktopWidth = 2400.0;
+    private volatile boolean lockView = true;
+
+    /** Shader mode keeps the view still while a screen is open (the mouse moves only the pointer). */
+    public void lockView(boolean on) {
+        lockView = on;
+    }
+
+    boolean lockView() {
+        return lockView;
+    }
     private final MouseSteps mouse;
     private final NamespacedKey speedKey;
 
@@ -197,12 +207,16 @@ public final class ScreenManager implements Listener {
                             if (views.get(player.getUniqueId()) == v) v.rightClick();
                         });
                     }
-                    if (msg instanceof net.minecraft.network.protocol.game.ServerboundMovePlayerPacket mp && mp.hasRotation()) {
-                        try {
-                            v.look(mp.getYRot(0f), mp.getXRot(0f));
-                        } catch (Throwable ignored) {
-                            // never break the player's connection over the pointer
+                    if (msg instanceof net.minecraft.network.protocol.game.ServerboundMovePlayerPacket mp) {
+                        if (mp.hasRotation()) {
+                            try {
+                                v.look(mp.getYRot(0f), mp.getXRot(0f));
+                            } catch (Throwable ignored) {
+                                // never break the player's connection over the pointer
+                            }
                         }
+                        // the player is held still: their turns move the pointer, and nobody else sees the head move
+                        if (views.get(player.getUniqueId()) == v) return;
                     }
                     super.channelRead(ctx, msg);
                 }
