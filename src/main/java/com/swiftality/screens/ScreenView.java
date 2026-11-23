@@ -60,7 +60,7 @@ public final class ScreenView implements ScreenHost {
     private final ServerPlayer sp;
     private volatile Screen screen;
 
-    private final BufferedImage image = new BufferedImage(Screen.W, Screen.H, BufferedImage.TYPE_INT_RGB);
+    private final BufferedImage image = new BufferedImage(Screen.W, Screen.H, BufferedImage.TYPE_INT_ARGB);
     private final int[] rgb = new int[Screen.W * Screen.H];
     private final byte[] frame = new byte[Screen.W * Screen.H];
     private final byte[] sent = new byte[Screen.W * Screen.H];
@@ -388,6 +388,10 @@ public final class ScreenView implements ScreenHost {
     /** Every tick (server thread): hover, the pitch stop, the server's copy of the pointer, and redraws. */
     void tick() {
         if (closed) return;
+        if (--pointerItemsIn <= 0) {
+            pointerItemsIn = 40;
+            sendPointerItems();
+        }
         if (shader) {
             if (turnBack) {
                 turnBack = false;
@@ -416,8 +420,38 @@ public final class ScreenView implements ScreenHost {
         requestRender(false);
     }
 
+    /** Ticks until the pointer items are sent again (the server may have resent a hotbar slot meanwhile). */
+    private int pointerItemsIn;
+
+    /**
+     * Fills the hotbar, on the client only, with an invisible, nameless item: with something in hand, a right click
+     * on nothing still reaches the server. The real inventory is sent back when the screen closes.
+     */
+    private void sendPointerItems() {
+        org.bukkit.inventory.ItemStack item = new org.bukkit.inventory.ItemStack(org.bukkit.Material.PAPER);
+        item.editMeta(m -> {
+            m.setItemModel(org.bukkit.NamespacedKey.minecraft("air"));
+            m.itemName(net.kyori.adventure.text.Component.empty());
+        });
+        net.minecraft.world.item.ItemStack nms = org.bukkit.craftbukkit.inventory.CraftItemStack.asNMSCopy(item);
+        for (int i = 0; i < 9; i++) {
+            sp.connection.send(new net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket(
+                    sp.inventoryMenu.containerId, sp.inventoryMenu.incrementStateId(), 36 + i, nms.copy()));
+        }
+    }
+
     void click() {
         if (screen.click((int) px, (int) py)) requestRender(false);
+    }
+
+    void rightClick() {
+        if (screen.rightClick((int) px, (int) py)) requestRender(false);
+    }
+
+    void text(String line) {
+        screen.text(line);
+        screen.markDirty();
+        requestRender(false);
     }
 
     void key(String key) {

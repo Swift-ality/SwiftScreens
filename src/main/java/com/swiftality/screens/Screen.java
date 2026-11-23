@@ -14,7 +14,7 @@ public abstract class Screen {
     /** Picture size: 10 x 6 maps. */
     public static final int COLS = 10, ROWS = 6, W = COLS * 128, H = ROWS * 128;
 
-    private record Hit(int id, int x, int y, int w, int h, Runnable action) {
+    private record Hit(int id, int x, int y, int w, int h, Runnable action, Runnable right) {
         boolean contains(int px, int py) {
             return px >= x && py >= y && px < x + w && py < y + h;
         }
@@ -38,6 +38,10 @@ public abstract class Screen {
         dirty = false;
         building = new ArrayList<>();
         Graphics2D g = img.createGraphics();
+        // start from a clear page: what a screen leaves undrawn is see-through (see Gfx.background)
+        g.setComposite(java.awt.AlphaComposite.Clear);
+        g.fillRect(0, 0, img.getWidth(), img.getHeight());
+        g.setComposite(java.awt.AlphaComposite.SrcOver);
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
         g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_OFF);
         g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
@@ -70,7 +74,12 @@ public abstract class Screen {
 
     /** Registers a clickable region (id must be stable between renders, unique on the page). */
     protected final void hit(int id, int x, int y, int w, int h, Runnable action) {
-        building.add(new Hit(id, x, y, w, h, action));
+        building.add(new Hit(id, x, y, w, h, action, null));
+    }
+
+    /** A clickable region with a different action for a right click. */
+    protected final void hit(int id, int x, int y, int w, int h, Runnable left, Runnable right) {
+        building.add(new Hit(id, x, y, w, h, left, right));
     }
 
     protected final boolean hovered(int id) {
@@ -114,6 +123,27 @@ public abstract class Screen {
         }
         return false;
     }
+
+    /**
+     * A right click at (x, y): runs the topmost region's right action. A region without one ignores right clicks.
+     * Returns whether anything ran.
+     */
+    public final boolean rightClick(int x, int y) {
+        List<Hit> all = hits;
+        for (int i = all.size() - 1; i >= 0; i--) {
+            Hit h = all.get(i);
+            if (h.contains(x, y)) {
+                if (h.right == null) return false;
+                h.right.run();
+                dirty = true;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** A line the viewer typed in chat while the screen was open (server thread); for search boxes. */
+    public void text(String line) {}
 
     /** A key: "jump" (space). Default does nothing. */
     public void key(String key) {}

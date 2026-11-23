@@ -57,7 +57,8 @@ public final class MapColors {
         return RGB[id & 255];
     }
 
-    public static void convert(int[] rgb, byte[] out) {
-        for (int i = 0; i < rgb.length; i++) out[i] = of(rgb[i]);
+    /** ARGB pixels to map colour ids; a see-through pixel (alpha under half) becomes id 0, drawn clear. */
+    public static void convert(int[] argb, byte[] out) {
+        for (int i = 0; i < argb.length; i++) out[i] = (argb[i] >>> 24) < 128 ? 0 : of(argb[i]);
     }
 }

@@ -49,6 +49,11 @@ public final class ScreenManager implements Listener {
     });
     private static final String HANDLER = "swiftscreens_screen";
     private final Map<UUID, Boolean> jumpHeld = new HashMap<>(), sneakHeld = new HashMap<>();
+    /** Whether each viewer could fly before their screen opened (creative flight would lift the camera off its spot). */
+    private final Map<UUID, Boolean> mayFly = new java.util.concurrent.ConcurrentHashMap<>();
+    /** When each viewer's last right click arrived (nanos): the arm swing that can follow it is not a left click. */
+    private final Map<UUID, Long> lastRight = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final long RIGHT_SWING_NANOS = 250_000_000L;
     private double pixelsPerDegree = 22.0;
     /** Told when a player tries to close a screen that will not close (sneak on a required pick). */
     private BukkitTask task;
@@ -186,6 +191,12 @@ public final class ScreenManager implements Listener {
             ch.pipeline().addBefore("packet_handler", HANDLER, new io.netty.channel.ChannelInboundHandlerAdapter() {
                 @Override
                 public void channelRead(io.netty.channel.ChannelHandlerContext ctx, Object msg) throws Exception {
+                    if (isRightClick(msg)) {
+                        lastRight.put(player.getUniqueId(), System.nanoTime());
+                        runOnServer(() -> {
+                            if (views.get(player.getUniqueId()) == v) v.rightClick();
+                        });
+                    }
                     if (msg instanceof net.minecraft.network.protocol.game.ServerboundMovePlayerPacket mp && mp.hasRotation()) {
                         try {
                             v.look(mp.getYRot(0f), mp.getXRot(0f));
@@ -197,6 +208,18 @@ public final class ScreenManager implements Listener {
                 }
             });
         });
+    }
+
+    /**
+     * A right click, main hand: on a frame (interact), on a block, or on nothing (use item: the viewer holds the
+     * invisible pointer item, so even an empty-handed click sends one).
+     */
+    private static boolean isRightClick(Object msg) {
+        var main = net.minecraft.world.InteractionHand.MAIN_HAND;
+        if (msg instanceof net.minecraft.network.protocol.game.ServerboundUseItemPacket p) return p.hand() == main;
+        if (msg instanceof net.minecraft.network.protocol.game.ServerboundUseItemOnPacket p) return p.hand() == main;
+        if (msg instanceof net.minecraft.network.protocol.game.ServerboundInteractPacket p) return p.hand() == main;
+        return false;
     }
 
     private void unlisten(Player player) {
@@ -215,13 +238,21 @@ public final class ScreenManager implements Listener {
         ScreenView v = views.remove(player.getUniqueId());
         jumpHeld.remove(player.getUniqueId());
         sneakHeld.remove(player.getUniqueId());
+        lastRight.remove(player.getUniqueId());
         if (v == null) return;
         unlisten(player);
         if (!quiet) hold(player, false);
+        restoreFlight(player);
+        // the hotbar showed pointer items (packets only): send the real inventory back
+        if (!quiet) player.updateInventory();
         v.dispose(quiet);
     }
 
     /** Re-renders [player]'s screen on the next tick (its data changed, a face loaded). */
+    public void refreshAll() {
+        for (ScreenView v : views.values()) v.screen().markDirty();
+    }
+
     public void refresh(Player player) {
         ScreenView v = views.get(player.getUniqueId());
         if (v != null) {
@@ -251,7 +282,17 @@ public final class ScreenManager implements Listener {
                         AttributeModifier.Operation.MULTIPLY_SCALAR_1, EquipmentSlotGroup.ANY));
             }
         }
-        if (on && p.isFlying()) p.setFlying(false);
+        if (on) {
+            mayFly.putIfAbsent(p.getUniqueId(), p.getAllowFlight());
+            p.setFlying(false);
+            p.setAllowFlight(false);
+        }
+    }
+
+    /** Gives back creative or plugin flight (saved with the player, so also when they leave mid-screen). */
+    private void restoreFlight(Player p) {
+        Boolean could = mayFly.remove(p.getUniqueId());
+        if (could != null) p.setAllowFlight(could);
     }
 
     private ScreenView view(Player p) {
@@ -265,7 +306,37 @@ public final class ScreenManager implements Listener {
         ScreenView v = view(e.getPlayer());
         if (v == null || e.getAnimationType() != PlayerAnimationType.ARM_SWING) return;
         e.setCancelled(true);
+        Long right = lastRight.get(e.getPlayer().getUniqueId());
+        if (right != null && System.nanoTime() - right < RIGHT_SWING_NANOS) return;
         v.click();
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onFly(org.bukkit.event.player.PlayerToggleFlightEvent e) {
+        if (viewing(e.getPlayer()) && e.isFlying()) e.setCancelled(true);
+    }
+
+    /** The hotbar holds pointer items that exist only on the client: no inventory changes while a screen is open. */
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onInventory(org.bukkit.event.inventory.InventoryClickEvent e) {
+        if (e.getWhoClicked() instanceof Player p && viewing(p)) e.setCancelled(true);
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onCreativeSlot(org.bukkit.event.inventory.InventoryCreativeEvent e) {
+        if (e.getWhoClicked() instanceof Player p && viewing(p)) e.setCancelled(true);
+    }
+
+    /** A chat line while a screen is open goes to the screen (search boxes), not to chat. */
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onChat(io.papermc.paper.event.player.AsyncChatEvent e) {
+        ScreenView v = view(e.getPlayer());
+        if (v == null) return;
+        e.setCancelled(true);
+        String line = net.kyori.adventure.text.serializer.plain.PlainTextComponentSerializer.plainText().serialize(e.message());
+        runOnServer(() -> {
+            if (views.get(e.getPlayer().getUniqueId()) == v) v.text(line);
+        });
     }
 
     @EventHandler(priority = EventPriority.LOWEST)

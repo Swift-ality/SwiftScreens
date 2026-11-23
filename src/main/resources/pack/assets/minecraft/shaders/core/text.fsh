@@ -78,7 +78,8 @@ vec4 so_screen_color() {
     int h = so_hand(picPx);
     if (h == 1) c = vec4(0.0, 0.0, 0.0, 1.0);
     else if (h == 2) c = vec4(1.0, 1.0, 1.0, 1.0);
-    c.a = 1.0;
+    // map colour 0 is clear: a see-through page shows the world there
+    c.a = c.a < 0.1 ? 0.0 : 1.0;
     return c;
 }
 #endif
@@ -87,6 +88,7 @@ void main() {
     #if !defined(IS_GUI) && !defined(IS_SEE_THROUGH)
     if (soScreen == 1) {
         vec4 c = so_screen_color();
+        if (c.a < 0.5) discard;
         #ifdef OIT_ALPHA_ONLY
         executeAlphaOnlyPhase(gl_FragCoord.z, 1.0);
         #else

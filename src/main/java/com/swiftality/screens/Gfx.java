@@ -29,7 +29,17 @@ public final class Gfx {
             GOOD = new Color(0x6EE36E), BAD = new Color(0xFF6B6B), MIXED = new Color(0xFFCF4A), GOLD = new Color(0xFFD54A),
             NONE = new Color(0x9A9A9A), RANDOM = new Color(0xC88CFF), SHADOW = new Color(0x2A2A2A);
 
+    /** The page colour behind every screen. */
+    public static final int BACKGROUND = 0x0B0B0E;
+    /** screen.background in the config: false leaves the page see-through, so the world shows round the panels. */
+    public static volatile boolean solidBackground = true;
+
     private Gfx() {}
+
+    /** Paints the page background (or leaves it see-through, per the server's setting). Draw it first. */
+    public static void background(Graphics2D g) {
+        if (solidBackground) fill(g, BACKGROUND, 0, 0, Screen.W, Screen.H);
+    }
 
     public static void fill(Graphics2D g, int rgb, int x, int y, int w, int h) {
         g.setColor(new Color(rgb));

@@ -27,7 +27,7 @@ depend: [SwiftScreens]
 
 ```kotlin
 repositories { mavenLocal { content { includeGroup("com.swiftality") } } }
-dependencies { compileOnly("com.swiftality:swiftscreens:0.1.0") { isTransitive = false } }
+dependencies { compileOnly("com.swiftality:swiftscreens:0.2.0") { isTransitive = false } }
 ```
 
 A screen:

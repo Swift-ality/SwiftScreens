@@ -13,7 +13,14 @@ import java.util.List;
  */
 public final class SwiftScreens extends JavaPlugin {
     private static ScreenManager screens;
+    private static Faces faces;
     private ScreenPack pack;
+
+    /** Players' faces for screens (cached, loaded in the background). */
+    public static Faces faces() {
+        if (faces == null) throw new IllegalStateException("SwiftScreens is not enabled");
+        return faces;
+    }
 
     /** The screen manager. Call it from your plugin's onEnable or later (declare {@code depend: [SwiftScreens]}). */
     public static ScreenManager screens() {
@@ -32,6 +39,7 @@ public final class SwiftScreens extends JavaPlugin {
         applyConfig(m);
         m.start();
         screens = m;
+        faces = new Faces(this, m::refreshAll);
         getLifecycleManager().registerEventHandler(LifecycleEvents.COMMANDS, e ->
                 e.registrar().register("screens", "Menu pointer speed; reload the menu settings.", List.of(),
                         new ScreensCommand(this)));
@@ -41,6 +49,7 @@ public final class SwiftScreens extends JavaPlugin {
     public void onDisable() {
         if (screens != null) screens.stop();
         screens = null;
+        faces = null;
         if (pack != null) pack.stop();
     }
 
@@ -52,5 +61,6 @@ public final class SwiftScreens extends JavaPlugin {
     private void applyConfig(ScreenManager m) {
         m.desktopWidth(getConfig().getDouble("screen.desktop-width", 2400.0));
         m.pointerSpeed(getConfig().getDouble("screen.pointer-speed", 22.0));
+        Gfx.solidBackground = getConfig().getBoolean("screen.background", false);
     }
 }
