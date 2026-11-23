@@ -54,6 +54,13 @@ SwiftScreens.screens().open(player, new HelloScreen());
 - `host.show(next)` switches page, `host.close()` closes, and `host.sound(...)` and `host.actionBar(...)` reach the viewer.
 - `draw()` runs on the SwiftScreens render thread and click actions run on the server thread. Read only
   thread-safe state while drawing.
+- `hit(id, x, y, w, h, left, right)` gives a region a separate right-click action. Right clicks work with an empty
+  hand: while a menu is open, the hotbar holds invisible client-only items, and the real inventory comes back on close.
+- Override `text(String line)` to get what the viewer types in chat while the menu is open, for search boxes.
+- Start `draw()` with `Gfx.background(g)`. With `screen.background: false` (the default), the page stays see-through
+  and the world shows around your panels.
+- `SwiftScreens.faces().face(uuid)` gives a player's 8x8 face, or null while it loads. It's safe to call from
+  `draw()`, and open menus redraw when a face arrives.
 - Override `mayClose()` and `refusedClose()` to keep a menu open until the player has chosen something.
 - `ScreenPreview.save(screen, file, px, py)` renders a page to PNG in map colours, with no server. Use it for
   previews and tests.
