@@ -1,0 +1,49 @@
+# SwiftScreens: fullscreen menus for every plugin that uses it.
+
+screen:
+  # With the resource pack the pointer moves like a desktop pointer: it crosses the screen in this many mouse
+  # steps, whatever the player's Minecraft sensitivity (the server learns it from how they turn). 1920 is a desktop
+  # pointer at Windows' default speed on a 1080p screen; 2400 is 20% slower. Players scale their own with
+  # /screens pointer <speed>. (At high sensitivity the head can only turn so far: up to 340 degrees across.)
+  desktop-width: 2400
+  # Without the pack (map mode): pointer pixels per degree of head turn (the screen is 1280 wide).
+  pointer-speed: 22.0
+
+# The screens' resource pack (core shaders). With it, the player's own client draws the screen over the whole window
+# and moves the pointer with their mouse every frame, and the crosshair is hidden. Players without it still get
+# screens, drawn on maps in front of a locked camera. Changes here need a restart.
+resource-pack:
+  # serve:    the plugin hosts the pack itself (port below) and sends it while players connect.
+  # url:      the plugin sends the pack from resource-pack.url (upload the exported zip there yourself).
+  # external: nothing is sent: merge the exported files into your server pack (server.properties, ItemsAdder,
+  #           Nexo, Oraxen, CraftEngine...). The pack overrides core/text.vsh, core/text.fsh and
+  #           core/position_tex_color.fsh, so it cannot merge with another pack that replaces those.
+  # off:      no pack, map screens only.
+  mode: serve
+  # serve / url: kick players who decline it.
+  required: false
+
+  # serve: where the built-in web server listens, and the address players download from
+  # (blank host: the server's server-ip, or 127.0.0.1, which only works on the same machine).
+  bind: 0.0.0.0
+  port: 25608
+  host: ""
+
+  # url: the full download url of the exported zip (it must be the file this version exports: the sha1 is checked).
+  url: ""
+
+  external:
+    # How the plugin knows a player has the shaders. any-pack: as soon as any resource pack finishes loading for
+    # them (or only the pack with pack-id, if set). always: assume every player has them.
+    detect: any-pack
+    pack-id: ""
+
+  # Written at every start. Paths are relative to plugins/SwiftScreens, or absolute; blank writes nothing.
+  export:
+    # A ready zip, to host or drop into a pack plugin's uploads.
+    zip: screens-pack.zip
+    # The pack's files unpacked here (e.g. plugins/ItemsAdder/contents/swiftscreens/resourcepack or a folder your
+    # pack plugin merges). Only these files are written.
+    folder: ""
+    # Leave pack.mcmeta out of the folder when merging into a pack that has its own.
+    include-mcmeta: true

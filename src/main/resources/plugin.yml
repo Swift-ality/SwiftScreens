@@ -1,0 +1,10 @@
+name: SwiftScreens
+version: '${version}'
+main: com.swiftality.screens.SwiftScreens
+api-version: '26.3'
+description: Fullscreen clickable menus for vanilla clients.
+author: Swift
+permissions:
+  swiftscreens.admin:
+    description: /screens reload.
+    default: op
