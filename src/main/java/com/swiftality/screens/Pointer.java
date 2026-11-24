@@ -51,13 +51,25 @@ final class Pointer {
     private final ItemDisplay root;
     private final List<Entity> parts = new ArrayList<>();
 
+    private final Plugin plugin;
+    private final Player viewer;
+    private boolean shown = true;
+
+    /** A pointer for a camera looking along +Z (the fullscreen wall). */
     Pointer(Plugin plugin, Player viewer, Location at) {
+        this(plugin, viewer, at, 0f);
+    }
+
+    /** A pointer for a viewer looking the way [yaw] points (0: +Z, 90: -X), flat on a picture facing them. */
+    Pointer(Plugin plugin, Player viewer, Location at, float yaw) {
+        this.plugin = plugin;
+        this.viewer = viewer;
         World w = at.getWorld();
         root = w.spawn(at, ItemDisplay.class, d -> {
             d.setPersistent(false);
             d.setVisibleByDefault(false);
             d.setTeleportDuration(1);
-            d.setRotation(0f, 0f);
+            d.setRotation(yaw, 0f);
         });
         viewer.showEntity(plugin, root);
         // the cube's top face (always lit fully) turned to face the camera, which looks along +Z
@@ -86,7 +98,7 @@ final class Pointer {
                     d.setBlock((fill ? Material.WHITE_CONCRETE : Material.BLACK_CONCRETE).createBlockData());
                     d.setBrightness(new Display.Brightness(15, 15));
                     d.setTransformation(t);
-                    d.setRotation(0f, 0f);
+                    d.setRotation(yaw, 0f);
                 });
                 viewer.showEntity(plugin, part);
                 root.addPassenger(part);
@@ -104,6 +116,23 @@ final class Pointer {
     /** Keeps the server's copy where the client has it (server thread), so a periodic sync never snaps it back. */
     void syncServer(Location at) {
         if (root.isValid()) root.teleport(at, TeleportFlag.EntityState.RETAIN_PASSENGERS);
+    }
+
+    /**
+     * Shows or hides the hand for the viewer (server thread). Showing puts it at [at] first; the parts go out before
+     * the root, so the root's spawn carries them as its passengers.
+     */
+    void shown(boolean on, Location at) {
+        if (on == shown) return;
+        shown = on;
+        if (on) {
+            syncServer(at);
+            for (Entity e : parts) viewer.showEntity(plugin, e);
+            viewer.showEntity(plugin, root);
+        } else {
+            viewer.hideEntity(plugin, root);
+            for (Entity e : parts) viewer.hideEntity(plugin, e);
+        }
     }
 
     void remove() {

@@ -10,7 +10,7 @@ import org.bukkit.entity.Player;
 import java.util.Collection;
 import java.util.List;
 
-/** /screens pointer [speed], /screens reload. */
+/** /screens pointer [speed], /screens reload, /screens demo (a placed screen to try). */
 final class ScreensCommand implements BasicCommand {
     private final SwiftScreens plugin;
 
@@ -46,13 +46,31 @@ final class ScreensCommand implements BasicCommand {
                 plugin.reload();
                 s.sendMessage(Component.text("SwiftScreens settings reloaded (the resource pack mode needs a restart).", NamedTextColor.GREEN));
             }
-            default -> s.sendMessage(Component.text("/screens pointer [speed]" + (s.hasPermission("swiftscreens.admin") ? ", /screens reload" : ""), NamedTextColor.GRAY));
+            case "demo" -> {
+                if (!(s instanceof Player p)) return;
+                if (!s.hasPermission("swiftscreens.admin")) {
+                    s.sendMessage(Component.text("You may not do that.", NamedTextColor.RED));
+                    return;
+                }
+                ScreenManager screens = SwiftScreens.screens();
+                if (args.length > 1 && args[1].equalsIgnoreCase("clear")) {
+                    screens.closePlaced(p);
+                    return;
+                }
+                try {
+                    screens.place(p, new DemoScreen());
+                } catch (IllegalStateException e) {
+                    s.sendMessage(Component.text(e.getMessage(), NamedTextColor.RED));
+                }
+            }
+            default -> s.sendMessage(Component.text("/screens pointer [speed]" + (s.hasPermission("swiftscreens.admin") ? ", /screens reload, /screens demo [clear]" : ""), NamedTextColor.GRAY));
         }
     }
 
     @Override
     public Collection<String> suggest(CommandSourceStack stack, String[] args) {
-        if (args.length <= 1) return stack.getSender().hasPermission("swiftscreens.admin") ? List.of("pointer", "reload") : List.of("pointer");
+        if (args.length <= 1) return stack.getSender().hasPermission("swiftscreens.admin") ? List.of("pointer", "reload", "demo") : List.of("pointer");
+        if (args.length == 2 && args[0].equalsIgnoreCase("demo")) return List.of("clear");
         return List.of();
     }
 }

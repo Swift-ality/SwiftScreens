@@ -63,5 +63,7 @@ public final class SwiftScreens extends JavaPlugin {
         m.pointerSpeed(getConfig().getDouble("screen.pointer-speed", 22.0));
         Gfx.solidBackground = getConfig().getBoolean("screen.background", false);
         m.lockView(getConfig().getBoolean("screen.lock-view", true));
+        m.placedRanges(getConfig().getDouble("placed.distance", 6.0), getConfig().getDouble("placed.reach", 16.0),
+                getConfig().getDouble("placed.max-distance", 48.0));
     }
 }

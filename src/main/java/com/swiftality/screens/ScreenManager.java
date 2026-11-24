@@ -30,6 +30,7 @@ import org.bukkit.plugin.Plugin;
 import org.bukkit.scheduler.BukkitTask;
 
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -48,6 +49,14 @@ public final class ScreenManager implements Listener {
         return t;
     });
     private static final String HANDLER = "swiftscreens_screen";
+    /** Reads right clicks for placed screens (the player moves freely, so nothing else is held back). */
+    private static final String PLACED_HANDLER = "swiftscreens_placed";
+    /** Each player's screens hanging in the air. */
+    private final Map<UUID, List<PlacedScreen>> placed = new java.util.concurrent.ConcurrentHashMap<>();
+    /** When each player's last right click for a placed screen arrived (nanos): one click can come as two packets. */
+    private final Map<UUID, Long> lastPlacedRight = new java.util.concurrent.ConcurrentHashMap<>();
+    private static final long PLACED_RIGHT_NANOS = 60_000_000L;
+    private volatile double placeDistance = 6.0, placedReach = 16.0, placedMaxDistance = 48.0;
     private final Map<UUID, Boolean> jumpHeld = new HashMap<>(), sneakHeld = new HashMap<>();
     /** Whether each viewer could fly before their screen opened (creative flight would lift the camera off its spot). */
     private final Map<UUID, Boolean> mayFly = new java.util.concurrent.ConcurrentHashMap<>();
@@ -77,11 +86,25 @@ public final class ScreenManager implements Listener {
             if (p != null) close(p, false);
         }
         views.clear();
+        for (List<PlacedScreen> list : placed.values()) {
+            for (PlacedScreen ps : list) closePlaced(ps, false);
+        }
+        placed.clear();
         renderer.shutdownNow();
     }
 
     public void pointerSpeed(double pixelsPerDegree) {
         this.pixelsPerDegree = pixelsPerDegree;
+    }
+
+    /**
+     * Placed screens: how far in front of the player {@link #place(Player, Screen)} hangs one, how far off it can be
+     * aimed at, and how far the player can go before it is taken down.
+     */
+    public void placedRanges(double distance, double reach, double maxDistance) {
+        this.placeDistance = distance;
+        this.placedReach = reach;
+        this.placedMaxDistance = maxDistance;
     }
 
     private ScreenPack pack;
@@ -192,6 +215,130 @@ public final class ScreenManager implements Listener {
         listen(player, v);
     }
 
+    // ---- placed screens -------------------------------------------------------------------------------------------
+
+    /**
+     * Hangs [screen] in the air in front of [player], facing them (snapped to the side they face most), and leaves
+     * them free to move. They aim with their crosshair: swings click, right clicks right-click. Server thread only.
+     *
+     * @throws IllegalStateException when the player already has the most placed screens one player can have
+     */
+    public PlacedScreen place(Player player, Screen screen) {
+        org.bukkit.block.BlockFace look = player.getFacing();
+        Location middle = player.getEyeLocation().add(look.getDirection().multiply(placeDistance));
+        return place(player, screen, middle, look.getOppositeFace());
+    }
+
+    /**
+     * Hangs [screen] in the air for [player] with its middle near [middle] (within half a block: frames hang on whole
+     * blocks), its picture facing [facing] (NORTH, SOUTH, EAST or WEST: the side a viewer stands on). Server thread
+     * only.
+     */
+    public PlacedScreen place(Player player, Screen screen, Location middle, org.bukkit.block.BlockFace facing) {
+        if (!Bukkit.isPrimaryThread()) throw new IllegalStateException("Place screens on the server thread");
+        List<PlacedScreen> list = placed.computeIfAbsent(player.getUniqueId(), k -> new java.util.concurrent.CopyOnWriteArrayList<>());
+        int slot = -1;
+        for (int s = 0; s < PlacedScreen.MAX_PER_PLAYER && slot < 0; s++) {
+            final int c = s;
+            if (list.stream().noneMatch(p -> p.slot == c)) slot = s;
+        }
+        if (slot < 0) throw new IllegalStateException(player.getName() + " already has " + PlacedScreen.MAX_PER_PLAYER + " placed screens");
+        PlacedScreen ps = new PlacedScreen(this, player, screen, slot, middle, facing);
+        list.add(ps);
+        ps.open();
+        listenPlaced(player);
+        return ps;
+    }
+
+    /** The player's placed screens. */
+    public List<PlacedScreen> placed(Player player) {
+        List<PlacedScreen> list = placed.get(player.getUniqueId());
+        return list == null ? List.of() : List.copyOf(list);
+    }
+
+    /** Takes down all of [player]'s placed screens. */
+    public void closePlaced(Player player) {
+        for (PlacedScreen ps : placed(player)) closePlaced(ps, false);
+    }
+
+    void closePlaced(PlacedScreen ps, boolean quiet) {
+        UUID id = ps.player().getUniqueId();
+        List<PlacedScreen> list = placed.get(id);
+        if (list == null || !list.remove(ps)) return;
+        if (list.isEmpty()) {
+            placed.remove(id, list);
+            lastPlacedRight.remove(id);
+            unlisten(ps.player(), PLACED_HANDLER);
+        }
+        ps.dispose(quiet);
+    }
+
+    /** The placed screen [player] aims at, or null. */
+    public PlacedScreen aimed(Player player) {
+        List<PlacedScreen> list = placed.get(player.getUniqueId());
+        if (list == null) return null;
+        for (PlacedScreen ps : list) if (ps.aiming()) return ps;
+        return null;
+    }
+
+    /** Right clicks off the connection: the main-hand use and interact packets (see isRightClick). */
+    private void listenPlaced(Player player) {
+        io.netty.channel.Channel ch = ((org.bukkit.craftbukkit.entity.CraftPlayer) player).getHandle().connection.connection.channel;
+        UUID id = player.getUniqueId();
+        ch.eventLoop().execute(() -> {
+            if (ch.pipeline().get(PLACED_HANDLER) != null || ch.pipeline().get("packet_handler") == null) return;
+            ch.pipeline().addBefore("packet_handler", PLACED_HANDLER, new io.netty.channel.ChannelInboundHandlerAdapter() {
+                @Override
+                public void channelRead(io.netty.channel.ChannelHandlerContext ctx, Object msg) throws Exception {
+                    if (isRightClick(msg)) {
+                        long now = System.nanoTime();
+                        Long before = lastPlacedRight.put(id, now);
+                        lastRight.put(id, now);
+                        if (before == null || now - before > PLACED_RIGHT_NANOS) {
+                            runOnServer(() -> {
+                                if (viewing(player)) return;
+                                PlacedScreen ps = aimed(player);
+                                if (ps != null) ps.rightClick();
+                            });
+                        }
+                    }
+                    super.channelRead(ctx, msg);
+                }
+            });
+        });
+    }
+
+    /** Every tick: drop screens the player left behind, and aim at the nearest picture in their line of sight. */
+    private void tickPlaced() {
+        for (Map.Entry<UUID, List<PlacedScreen>> e : placed.entrySet()) {
+            Player p = Bukkit.getPlayer(e.getKey());
+            if (p == null) continue;
+            boolean fullscreen = viewing(p);
+            PlacedScreen best = null;
+            PlacedScreen.Aim bestAim = null;
+            for (PlacedScreen ps : e.getValue()) {
+                if (ps.outOfRange(placedMaxDistance)) {
+                    closePlaced(ps, false);
+                    continue;
+                }
+                if (fullscreen) continue;
+                PlacedScreen.Aim a = ps.aim(placedReach);
+                if (a != null && (bestAim == null || a.t() < bestAim.t())) {
+                    best = ps;
+                    bestAim = a;
+                }
+            }
+            for (PlacedScreen ps : e.getValue()) {
+                try {
+                    ps.tick(ps == best ? bestAim : null);
+                } catch (Throwable t) {
+                    plugin.getLogger().warning("Placed screen for " + p.getName() + " failed: " + t);
+                    closePlaced(ps, false);
+                }
+            }
+        }
+    }
+
     /** Reads the player's head turns off their connection as they arrive, ahead of the server thread. */
     private void listen(Player player, ScreenView v) {
         io.netty.channel.Channel ch = ((org.bukkit.craftbukkit.entity.CraftPlayer) player).getHandle().connection.connection.channel;
@@ -237,10 +384,14 @@ public final class ScreenManager implements Listener {
     }
 
     private void unlisten(Player player) {
+        unlisten(player, HANDLER);
+    }
+
+    private void unlisten(Player player, String handler) {
         try {
             io.netty.channel.Channel ch = ((org.bukkit.craftbukkit.entity.CraftPlayer) player).getHandle().connection.connection.channel;
             ch.eventLoop().execute(() -> {
-                if (ch.pipeline().get(HANDLER) != null) ch.pipeline().remove(HANDLER);
+                if (ch.pipeline().get(handler) != null) ch.pipeline().remove(handler);
             });
         } catch (Throwable ignored) {
             // connection already gone
@@ -283,6 +434,7 @@ public final class ScreenManager implements Listener {
                 close(v.player(), false);
             }
         }
+        tickPlaced();
     }
 
     /** Stops the player walking, jumping and falling while a screen is open (transient: never saved). */
@@ -317,12 +469,30 @@ public final class ScreenManager implements Listener {
 
     @EventHandler(priority = EventPriority.LOWEST, ignoreCancelled = false)
     public void onSwing(PlayerAnimationEvent e) {
+        if (e.getAnimationType() != PlayerAnimationType.ARM_SWING) return;
         ScreenView v = view(e.getPlayer());
-        if (v == null || e.getAnimationType() != PlayerAnimationType.ARM_SWING) return;
+        PlacedScreen ps = v == null ? aimed(e.getPlayer()) : null;
+        if (v == null && ps == null) return;
         e.setCancelled(true);
         Long right = lastRight.get(e.getPlayer().getUniqueId());
         if (right != null && System.nanoTime() - right < RIGHT_SWING_NANOS) return;
-        v.click();
+        if (v != null) v.click();
+        else ps.click();
+    }
+
+    /** A screen is open, or the player aims at a placed one: what is behind it is not broken, hit or used. */
+    private boolean busy(Player p) {
+        return viewing(p) || aimed(p) != null;
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onBreak(org.bukkit.event.block.BlockBreakEvent e) {
+        if (aimed(e.getPlayer()) != null) e.setCancelled(true);
+    }
+
+    @EventHandler(priority = EventPriority.LOWEST)
+    public void onHit(org.bukkit.event.entity.EntityDamageByEntityEvent e) {
+        if (e.getDamager() instanceof Player p && aimed(p) != null) e.setCancelled(true);
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
@@ -355,12 +525,12 @@ public final class ScreenManager implements Listener {
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onInteract(PlayerInteractEvent e) {
-        if (viewing(e.getPlayer())) e.setCancelled(true);
+        if (busy(e.getPlayer())) e.setCancelled(true);
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
     public void onInteractEntity(PlayerInteractEntityEvent e) {
-        if (viewing(e.getPlayer())) e.setCancelled(true);
+        if (busy(e.getPlayer())) e.setCancelled(true);
     }
 
     @EventHandler
@@ -419,6 +589,7 @@ public final class ScreenManager implements Listener {
     @EventHandler
     public void onWorld(PlayerChangedWorldEvent e) {
         close(e.getPlayer(), false);
+        closePlaced(e.getPlayer());
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
@@ -434,6 +605,7 @@ public final class ScreenManager implements Listener {
     @EventHandler
     public void onQuit(PlayerQuitEvent e) {
         close(e.getPlayer(), true);
+        for (PlacedScreen ps : placed(e.getPlayer())) closePlaced(ps, true);
     }
 
     @EventHandler(priority = EventPriority.LOWEST)
@@ -454,6 +626,11 @@ public final class ScreenManager implements Listener {
         ClassLoader owner = e.getPlugin().getClass().getClassLoader();
         for (ScreenView v : views.values().toArray(new ScreenView[0])) {
             if (v.screen().getClass().getClassLoader() == owner) close(v.player(), false);
+        }
+        for (List<PlacedScreen> list : placed.values()) {
+            for (PlacedScreen ps : list) {
+                if (ps.screen().getClass().getClassLoader() == owner) closePlaced(ps, false);
+            }
         }
     }
 

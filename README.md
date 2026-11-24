@@ -27,7 +27,7 @@ depend: [SwiftScreens]
 
 ```kotlin
 repositories { mavenLocal { content { includeGroup("com.swiftality") } } }
-dependencies { compileOnly("com.swiftality:swiftscreens:0.2.0") { isTransitive = false } }
+dependencies { compileOnly("com.swiftality:swiftscreens:0.3.0") { isTransitive = false } }
 ```
 
 A screen:
@@ -65,6 +65,31 @@ SwiftScreens.screens().open(player, new HelloScreen());
 - `ScreenPreview.save(screen, file, px, py)` renders a page to PNG in map colours, with no server. Use it for
   previews and tests.
 - When your plugin disables, its open screens close.
+
+## Screens in the air
+
+A screen can also hang in the world for one player, who keeps walking, jumping and looking around. They aim with
+the crosshair: the server casts a ray from their eye every tick, and the pointer hand sits where it meets the
+picture. Blocks in between stop the ray.
+
+```java
+PlacedScreen board = SwiftScreens.screens().place(player, new HelloScreen());     // in front of them, facing them
+SwiftScreens.screens().place(player, screen, location, BlockFace.SOUTH);         // middle near location, facing south
+board.close();                                    // or host.close() from the screen; closePlaced(player) for all
+```
+
+- It's the same `Screen` class: `hit`, `hovered`, `host.show`, `host.sound` and `host.close` all work.
+- Left click clicks and right click right-clicks. While the player aims at the picture, nothing behind it is broken,
+  hit or used. With an empty hand, the selected slot holds an invisible item on the client only, so a right click
+  still reaches the server.
+- It's 10 x 6 blocks (one map per block), facing north, south, east or west. Item frames can't turn any other way.
+  The maps carry no shader signature, so it needs no resource pack and the pack never takes it fullscreen.
+- Clear pixels are see-through (draw with `Gfx.background(g)` for a solid page).
+- It's taken down when the player goes further than `placed.max-distance` from it, changes world or leaves.
+  Chat and sneak stay normal, and only fullscreen screens use them.
+- A player can have up to 16 placed screens. The nearest one in their line of sight gets the pointer. While a
+  fullscreen screen is open, placed screens ignore input.
+- `/screens demo` (admin) places a test screen, and `/screens demo clear` takes all of yours down.
 
 ## Server owners
 

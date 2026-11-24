@@ -513,16 +513,21 @@ public final class ScreenView implements ScreenHost {
      * on nothing still reaches the server. The real inventory is sent back when the screen closes.
      */
     private void sendPointerItems() {
+        net.minecraft.world.item.ItemStack nms = pointerItem();
+        for (int i = 0; i < 9; i++) {
+            sp.connection.send(new net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket(
+                    sp.inventoryMenu.containerId, sp.inventoryMenu.incrementStateId(), 36 + i, nms.copy()));
+        }
+    }
+
+    /** An invisible, nameless item, held on the client only so that a right click on nothing sends a packet. */
+    static net.minecraft.world.item.ItemStack pointerItem() {
         org.bukkit.inventory.ItemStack item = new org.bukkit.inventory.ItemStack(org.bukkit.Material.PAPER);
         item.editMeta(m -> {
             m.setItemModel(org.bukkit.NamespacedKey.minecraft("air"));
             m.itemName(net.kyori.adventure.text.Component.empty());
         });
-        net.minecraft.world.item.ItemStack nms = org.bukkit.craftbukkit.inventory.CraftItemStack.asNMSCopy(item);
-        for (int i = 0; i < 9; i++) {
-            sp.connection.send(new net.minecraft.network.protocol.game.ClientboundContainerSetSlotPacket(
-                    sp.inventoryMenu.containerId, sp.inventoryMenu.incrementStateId(), 36 + i, nms.copy()));
-        }
+        return org.bukkit.craftbukkit.inventory.CraftItemStack.asNMSCopy(item);
     }
 
     void click() {
@@ -609,35 +614,7 @@ public final class ScreenView implements ScreenHost {
 
     /** Sends each map's changed rectangle (all of it when [all]). */
     private void send(boolean all) {
-        for (int r = 0; r < Screen.ROWS; r++) {
-            for (int c = 0; c < Screen.COLS; c++) {
-                int x0 = c * 128, y0 = r * 128;
-                int minX = 128, minY = 128, maxX = -1, maxY = -1;
-                for (int y = 0; y < 128; y++) {
-                    int row = (y0 + y) * Screen.W + x0;
-                    for (int x = 0; x < 128; x++) {
-                        if (all || frame[row + x] != sent[row + x]) {
-                            if (x < minX) minX = x;
-                            if (x > maxX) maxX = x;
-                            if (y < minY) minY = y;
-                            if (y > maxY) maxY = y;
-                        }
-                    }
-                }
-                if (maxX < 0) continue;
-                int w = maxX - minX + 1, h = maxY - minY + 1;
-                byte[] colors = new byte[w * h];
-                for (int y = 0; y < h; y++) {
-                    int src = (y0 + minY + y) * Screen.W + x0 + minX;
-                    System.arraycopy(frame, src, colors, y * w, w);
-                    System.arraycopy(frame, src, sent, src, w);
-                }
-                // row-major, x fastest: MapPatch reads colors[x + y * width]
-                MapItemSavedData.MapPatch patch = new MapItemSavedData.MapPatch(minX, minY, w, h, colors);
-                sp.connection.send(new ClientboundMapItemDataPacket(new MapId(MAP_ID_BASE + r * Screen.COLS + c),
-                        (byte) 0, true, Optional.empty(), Optional.of(patch)));
-            }
-        }
+        MapPatches.send(sp, frame, sent, MAP_ID_BASE, all);
     }
 
     private static float wrap(float a) {

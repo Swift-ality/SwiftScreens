@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "com.swiftality"
-version = "0.2.0"
+version = "0.3.0"
 description = "Fullscreen clickable menus for vanilla Minecraft clients, drawn with Java2D on maps and core shaders."
 
 repositories {

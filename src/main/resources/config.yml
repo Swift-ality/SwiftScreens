@@ -16,6 +16,16 @@ screen:
   # Without the pack (map mode): pointer pixels per degree of head turn (the screen is 1280 wide).
   pointer-speed: 22.0
 
+# Placed screens: hung in the air for one player, who keeps moving and aims at them with the crosshair (left click
+# clicks, right click right-clicks). One map per block, so a screen is 10 x 6 blocks. They need no resource pack.
+placed:
+  # How far in front of the player's eyes a plugin's place(player, screen) hangs one (blocks).
+  distance: 6.0
+  # How far off a player can aim at one.
+  reach: 16.0
+  # A player this far from one (or in another world) has it taken down.
+  max-distance: 48.0
+
 # The screens' resource pack (core shaders). With it, the player's own client draws the screen over the whole window
 # and moves the pointer with their mouse every frame, and the crosshair is hidden. Players without it still get
 # screens, drawn on maps in front of a locked camera. Changes here need a restart.
